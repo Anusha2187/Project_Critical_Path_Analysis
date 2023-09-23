@@ -1,0 +1,255 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+
+
+# Define the project tasks with their attributes
+data = {
+    'Code': ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'],
+    'Activity': ['Planning', 'Purchasing', 'Excavation', 'Sawing', 'Placement', 'Assembly', 'Infill', 'Outfill', 'Decoration'],
+    'Time (days)': [20, 60, 100, 30, 20, 10, 20, 10, 30],
+    'Immediate Predecessors': [None, 'A', 'A', 'B', 'C,D', 'E', 'F', 'F', 'G,H'],
+    'Shortest Duration Possible (days)': [15, 50, 75, 20, None, None, None, None, None],
+    'Acceleration Cost/day ($)': [30, 4, 20, 15, None, None, None, None, None]
+}
+
+#Create a dataframe from the data
+
+tasks_df = pd.DataFrame(data)
+
+import networkx as nx
+
+#Create a directed graph
+
+G = nx.DiGraph()
+
+#Add nodes 
+
+for idx, row in tasks_df.iterrows():
+    G.add_node(row['Code'])
+label=row['Activity']    
+
+#Add edges based on the immediate predecessors
+
+for idx, row in tasks_df.iterrows():
+     if row['Immediate Predecessors']:
+        predecessors = row['Immediate Predecessors'].split(',')
+        for pred in predecessors:
+            G.add_edge(pred, row['Code'])  
+
+#Create a sample graph
+
+G = nx.DiGraph()
+G.add_edge('A', 'B', weight=3)
+G.add_edge('A', 'C', weight=2)
+G.add_edge('B', 'D', weight=4)
+G.add_edge('C', 'D', weight=2)
+
+# Add nodes
+for idx, row in tasks_df.iterrows():
+    G.add_node(row['Code'], label=row['Activity'])
+
+# Add edges based on the immediate predecessors
+for idx, row in tasks_df.iterrows():
+    if row['Immediate Predecessors']:
+        predecessors = row['Immediate Predecessors'].split(',')
+        for pred in predecessors:
+            G.add_edge(pred, row['Code'])
+
+# Draw the network diagram
+pos = nx.spring_layout(G)  # positions for all nodes
+labels = nx.get_edge_attributes(G, 'weight')
+nx.draw(G, pos, with_labels=True, node_size=700, node_color='skyblue')
+nx.draw_networkx_labels(G, pos, labels=nx.get_node_attributes(G, 'label'))
+plt.title('Project Network Diagram')
+plt.show()  
+
+# Draw the network diagram with just the task codes
+nx.draw(G, pos, with_labels=True, node_size=700, node_color='skyblue')
+nx.draw_networkx_labels(G, pos)
+plt.title('Project Network Diagram (Task Codes Only)')
+plt.show()
+
+# Initialize columns for the earliest start and finish times
+tasks_df['Earliest Start (days)'] = 0
+tasks_df['Earliest Finish (days)'] = 0
+
+# Create a dictionary to store the earliest finish time of each task
+earliest_finish_times = {}
+
+# Define a function to calculate the earliest start and finish times
+def calculate_earliest_times(row):
+    if row['Immediate Predecessors']:
+        predecessors = row['Immediate Predecessors'].split(',')
+        row['Earliest Start (days)'] = max([earliest_finish_times[pred] for pred in predecessors])
+    row['Earliest Finish (days)'] = row['Earliest Start (days)'] + row['Time (days)']
+    earliest_finish_times[row['Code']] = row['Earliest Finish (days)']
+    return row
+
+# Apply the function to calculate the earliest start and finish times
+tasks_df = tasks_df.apply(calculate_earliest_times, axis=1)
+
+# Display the updated DataFrame with the earliest start and finish times
+tasks_df[['Code', 'Activity', 'Time (days)', 'Immediate Predecessors', 'Earliest Start (days)', 'Earliest Finish (days)']]
+
+
+# Initialize columns for earliest start (ES) and earliest finish (EF) times
+tasks_df['ES'] = 0
+tasks_df['EF'] = 0
+
+# Calculate the earliest start and finish times for each task
+for idx, row in tasks_df.iterrows():
+    if row['Immediate Predecessors']:
+        predecessors = row['Immediate Predecessors'].split(',')
+        tasks_df.at[idx, 'ES'] = max(tasks_df[tasks_df['Code'].isin(predecessors)]['EF'])
+    tasks_df.at[idx, 'EF'] = tasks_df.at[idx, 'ES'] + row['Time (days)']
+
+# Display the updated DataFrame with ES and EF times
+tasks_df[['Code', 'Activity', 'Time (days)', 'Immediate Predecessors', 'ES', 'EF']]
+
+# Initialize columns for Latest Start (LS) and Latest Finish (LF)
+tasks_df['LS'] = 0
+tasks_df['LF'] = max(tasks_df['EF'])  # Set initial LF to the project completion time
+
+# Calculate LS and LF for each task starting from the end
+for idx, row in tasks_df.sort_values(by='EF', ascending=False).iterrows():
+    successors = [code for code, pred in zip(tasks_df['Code'], tasks_df['Immediate Predecessors']) if str(row['Code']) in str(pred)]
+    if successors:
+        min_ls = min(tasks_df[tasks_df['Code'].isin(successors)]['LS'])
+        tasks_df.loc[idx, 'LF'] = min_ls
+        tasks_df.loc[idx, 'LS'] = min_ls - row['Time (days)']
+
+# Display the updated DataFrame with ES, EF, LS, and LF values
+tasks_df[['Code', 'Activity', 'Time (days)', 'Immediate Predecessors', 'ES', 'EF', 'LS', 'LF']]
+
+      # Calculate the slack time for each task
+tasks_df['Slack'] = tasks_df['LF'] - tasks_df['EF']
+
+# Identify tasks where slack time is zero (critical tasks)
+critical_tasks = tasks_df[tasks_df['Slack'] == 0]
+
+# Display the critical tasks
+critical_tasks[['Code', 'Activity', 'ES', 'EF', 'LS', 'LF', 'Slack']]
+
+# Identify the critical path by traversing the network from start to end
+start_task = tasks_df[tasks_df['Immediate Predecessors'].isna()]['Code'].values[0]
+end_task = tasks_df[tasks_df['LF'] == tasks_df['LF'].max()]['Code'].values[0]
+
+critical_path = [start_task]
+current_task = start_task
+
+while current_task != end_task:
+    successors = [code for code, pred in zip(tasks_df['Code'], tasks_df['Immediate Predecessors']) if str(current_task) in str(pred)]
+    critical_successor = successors[0]
+    for succ in successors:
+        if tasks_df[tasks_df['Code'] == succ]['Slack'].values[0] == 0:
+            critical_successor = succ
+            break
+    critical_path.append(critical_successor)
+    current_task = critical_successor
+
+critical_path
+
+# Filter tasks that are on the critical path
+critical_tasks_df = tasks_df[tasks_df['Code'].isin(critical_path)]
+
+# Calculate the acceleration potential for each critical task
+critical_tasks_df['Acceleration Potential'] = critical_tasks_df['Time (days)'] - critical_tasks_df['Shortest Duration Possible (days)']
+
+# Calculate the shortest possible project duration
+shortest_possible_duration = critical_tasks_df['Shortest Duration Possible (days)'].sum()
+
+shortest_possible_duration
+
+# Adjust the duration of tasks on the critical path to their shortest possible durations
+for idx, row in tasks_df.iterrows():
+    if row['Code'] in critical_path and not pd.isna(row['Shortest Duration Possible (days)']):
+        tasks_df.loc[idx, 'Time (days)'] = row['Shortest Duration Possible (days)']
+
+# Recalculate ES and EF for each task
+tasks_df['ES'] = 0
+tasks_df['EF'] = 0
+for idx, row in tasks_df.iterrows():
+    if not row['Immediate Predecessors']:
+        tasks_df.loc[idx, 'EF'] = row['Time (days)']
+    else:
+        predecessors = row['Immediate Predecessors'].split(',')
+        max_ef = max(tasks_df[tasks_df['Code'].isin(predecessors)]['EF'])
+        tasks_df.loc[idx, 'ES'] = max_ef
+        tasks_df.loc[idx, 'EF'] = max_ef + row['Time (days)']
+
+# Recalculate LS and LF for each task starting from the end
+tasks_df['LS'] = 0
+tasks_df['LF'] = max(tasks_df['EF'])
+for idx, row in tasks_df.sort_values(by='EF', ascending=False).iterrows():
+    successors = [code for code, pred in zip(tasks_df['Code'], tasks_df['Immediate Predecessors']) if str(row['Code']) in str(pred)]
+    if successors:
+        min_ls = min(tasks_df[tasks_df['Code'].isin(successors)]['LS'])
+        tasks_df.loc[idx, 'LF'] = min_ls
+        tasks_df.loc[idx, 'LS'] = min_ls - row['Time (days)']
+
+# Calculate the slack time for each task
+tasks_df['Slack'] = tasks_df['LF'] - tasks_df['EF']
+
+# Identify the new critical path
+new_critical_path = tasks_df[tasks_df['Slack'] == 0]['Code'].tolist()
+
+new_critical_path
+
+# Define positions and labels (replace with your actual data)
+pos = nx.spring_layout(G)  # positions for all nodes
+labels = nx.get_edge_attributes(G, 'weight')
+
+#Calculate the critical path and project duration
+critical_path = []
+project_duration = 0
+
+def calculate_critical_path(task_code):
+    global project_duration
+    global critical_path
+    
+    task = tasks_df[tasks_df['Code'] == task_code].iloc[0]
+    
+    # Check if there are immediate predecessors
+    if not pd.isna(task['Immediate Predecessors']):
+        predecessors = task['Immediate Predecessors'].split(',')
+        for predecessor in predecessors:
+            calculate_critical_path(predecessor.strip())
+    
+    project_duration += task['Time (days)']
+    critical_path.append(task_code)
+
+ # Find tasks with no predecessors (starting tasks)
+starting_tasks = tasks_df[tasks_df['Immediate Predecessors'].isna()]['Code']
+
+# Calculate critical path and project duration for each starting task
+for starting_task in starting_tasks:
+    calculate_critical_path(starting_task)
+# Print critical path and project duration
+print("Critical Path:", ' -> '.join(critical_path))
+print("Project Duration (days):", project_duration)
+
+#Calculate the total cost of the project at different durations
+total_cost = []
+for duration in range(project_duration, 14, -1):  # Adjust the range as needed
+    cost = 0
+    for task in critical_path:
+        task_code = task  # Define task_code within the loop
+        task_data = tasks_df[tasks_df['Code'] == task_code].iloc[0]
+        if task_data['Shortest Duration Possible (days)'] < duration:
+            cost += (duration - task_data['Shortest Duration Possible (days)']) * task_data['Acceleration Cost/day ($)']
+    total_cost.append(cost)
+
+plt.plot(range(project_duration, 14, -1), total_cost)  # Adjust the range as needed
+plt.xlabel('Project Duration (days)')
+plt.ylabel('Total Cost ($)')
+plt.title('Cost Time Tradeoff Graph')
+plt.show()
+  
+  
+      
+
+
+      
+  
+  
+  
